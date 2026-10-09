@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::peer::*;
+use crate::afpes;
 use hbb_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
@@ -16,7 +17,7 @@ use hbb_common::{
         register_pk_response::Result::{TOO_FREQUENT, UUID_MISMATCH},
         *,
     },
-    tcp::FramedStream,
+    tcp::{Encrypt, FramedStream},
     timeout,
     tokio::{
         self,
@@ -51,7 +52,8 @@ const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
-    TcpStream(TcpStreamSink),
+    // AFPES: o TCP carrega a cifragem combinada na troca de chaves (KeyExchange)
+    TcpStream(TcpStreamSink, Option<Encrypt>),
     Ws(WsSink),
 }
 type Sender = mpsc::UnboundedSender<Data>;
@@ -77,6 +79,7 @@ struct Inner {
     mask: Option<Ipv4Network>,
     local_ip: String,
     sk: Option<sign::SecretKey>,
+    secure_tcp: Arc<afpes::SecureTcpKeys>,
 }
 
 #[derive(Clone)]
@@ -149,6 +152,7 @@ impl RendezvousServer {
                 sk,
                 mask,
                 local_ip,
+                secure_tcp: Arc::new(afpes::SecureTcpKeys::generate()),
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
@@ -177,6 +181,7 @@ impl RendezvousServer {
                 "N"
             }
         );
+        afpes::log_config();
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -511,6 +516,19 @@ impl RendezvousServer {
     ) -> bool {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
+                Some(rendezvous_message::Union::KeyExchange(ex)) => {
+                    // AFPES: fase 2 da troca de chaves; daqui em diante o TCP é cifrado
+                    match (afpes::key_exchange_phase2(&self.inner.secure_tcp, &ex), sink.as_mut()) {
+                        (Some(k), Some(Sink::TcpStream(_, enc))) => {
+                            *enc = Some(Encrypt::new(k));
+                            return true;
+                        }
+                        _ => {
+                            log::warn!("Troca de chaves inválida de {:?}", addr);
+                            return false;
+                        }
+                    }
+                }
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
@@ -717,6 +735,15 @@ impl RendezvousServer {
             });
             return Ok((msg_out, None));
         }
+        if let Some(reason) = afpes::check_login(&ph.token) {
+            log::warn!("Pedido de conexão de {} para {} recusado: {}", addr, ph.id, reason);
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_punch_hole_response(PunchHoleResponse {
+                other_failure: reason.to_owned(),
+                ..Default::default()
+            });
+            return Ok((msg_out, None));
+        }
         let id = ph.id;
         // punch hole request from A, relay to B,
         // check if in same intranet first,
@@ -852,7 +879,11 @@ impl RendezvousServer {
         if let Some(sink) = sink.as_mut() {
             if let Ok(bytes) = msg.write_to_bytes() {
                 match sink {
-                    Sink::TcpStream(s) => {
+                    Sink::TcpStream(s, enc) => {
+                        let bytes = match enc.as_mut() {
+                            Some(e) => e.enc(&bytes),
+                            None => bytes,
+                        };
                         allow_err!(s.send(Bytes::from(bytes)).await);
                     }
                     Sink::Ws(ws) => {
@@ -1216,8 +1247,21 @@ impl RendezvousServer {
             }
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
-            sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
+            sink = Some(Sink::TcpStream(a, None));
+            // AFPES: fase 1 da troca de chaves (só na porta principal, que recebe a chave do servidor)
+            if !key.is_empty() {
+                if let Some(server_sk) = self.inner.sk.as_ref() {
+                    let msg = afpes::key_exchange_phase1(&self.inner.secure_tcp, server_sk);
+                    Self::send_to_sink(&mut sink, msg).await;
+                }
+            }
+            while let Ok(Some(Ok(mut bytes))) = timeout(30_000, b.next()).await {
+                if let Some(Sink::TcpStream(_, Some(enc))) = sink.as_mut() {
+                    if let Err(err) = enc.dec(&mut bytes) {
+                        log::warn!("Falha ao decifrar dados TCP de {:?}: {:?}", addr, err);
+                        break;
+                    }
+                }
                 if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
                     break;
                 }
