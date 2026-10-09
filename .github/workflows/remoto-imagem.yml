@@ -1,12 +1,12 @@
-# Imagem do servidor AFPES (hbbs + hbbr) publicada no GHCR.
-# Roda os testes do módulo afpes antes de compilar (ver Dockerfile.afpes).
-name: AFPES imagem do servidor
+# Imagem do servidor (hbbs + hbbr) do app-remoto publicada no GHCR da conta dona do repositório.
+# Roda os testes do módulo remoto antes de compilar (ver Dockerfile.remoto).
+name: Imagem do servidor
 
 on:
   workflow_dispatch:
   push:
-    branches: [afpes]
-    tags: ['afpes-v*']
+    branches: [remoto]
+    tags: ['remoto-v*']
 
 permissions:
   contents: read
@@ -28,15 +28,15 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/afpes/remoto-servidor
+          images: ghcr.io/${{ github.repository_owner }}/remoto-servidor
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/afpes' }}
-            type=match,pattern=afpes-v(.*),group=1
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/remoto' }}
+            type=match,pattern=remoto-v(.*),group=1
             type=sha,prefix=
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.afpes
+          file: Dockerfile.remoto
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -1,10 +1,10 @@
-# hbbs/hbbr oficiais + extensões AFPES (src/afpes.rs): troca de chaves e login obrigatório.
-# Build: docker build -f Dockerfile.afpes -t afpes/remoto-servidor .
+# hbbs/hbbr oficiais + extensões do app-remoto (src/remoto.rs): troca de chaves e login obrigatório.
+# Build: docker build -f Dockerfile.remoto -t remoto-servidor .
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
 # testes das extensões antes de gerar os binários
-RUN cargo test --release --lib afpes && cargo build --release --bin hbbs --bin hbbr
+RUN cargo test --release --lib remoto && cargo build --release --bin hbbs --bin hbbr
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \

@@ -1,6 +1,6 @@
 use crate::common::*;
 use crate::peer::*;
-use crate::afpes;
+use crate::remoto;
 use hbb_common::{
     allow_err, bail,
     bytes::{Bytes, BytesMut},
@@ -52,7 +52,7 @@ const REG_TIMEOUT: i64 = 30_000;
 type TcpStreamSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
 type WsSink = SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, tungstenite::Message>;
 enum Sink {
-    // AFPES: o TCP carrega a cifragem combinada na troca de chaves (KeyExchange)
+    // app-remoto: o TCP carrega a cifragem combinada na troca de chaves (KeyExchange)
     TcpStream(TcpStreamSink, Option<Encrypt>),
     Ws(WsSink),
 }
@@ -79,7 +79,7 @@ struct Inner {
     mask: Option<Ipv4Network>,
     local_ip: String,
     sk: Option<sign::SecretKey>,
-    secure_tcp: Arc<afpes::SecureTcpKeys>,
+    secure_tcp: Arc<remoto::SecureTcpKeys>,
 }
 
 #[derive(Clone)]
@@ -152,7 +152,7 @@ impl RendezvousServer {
                 sk,
                 mask,
                 local_ip,
-                secure_tcp: Arc::new(afpes::SecureTcpKeys::generate()),
+                secure_tcp: Arc::new(remoto::SecureTcpKeys::generate()),
             }),
         };
         log::info!("mask: {:?}", rs.inner.mask);
@@ -181,7 +181,7 @@ impl RendezvousServer {
                 "N"
             }
         );
-        afpes::log_config();
+        remoto::log_config();
         if test_addr.to_lowercase() != "no" {
             let test_addr = if test_addr.is_empty() {
                 listener.local_addr()?
@@ -517,8 +517,8 @@ impl RendezvousServer {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::KeyExchange(ex)) => {
-                    // AFPES: fase 2 da troca de chaves; daqui em diante o TCP é cifrado
-                    match (afpes::key_exchange_phase2(&self.inner.secure_tcp, &ex), sink.as_mut()) {
+                    // app-remoto: fase 2 da troca de chaves; daqui em diante o TCP é cifrado
+                    match (remoto::key_exchange_phase2(&self.inner.secure_tcp, &ex), sink.as_mut()) {
                         (Some(k), Some(Sink::TcpStream(_, enc))) => {
                             *enc = Some(Encrypt::new(k));
                             return true;
@@ -735,7 +735,7 @@ impl RendezvousServer {
             });
             return Ok((msg_out, None));
         }
-        if let Some(reason) = afpes::check_login(&ph.token) {
+        if let Some(reason) = remoto::check_login(&ph.token) {
             log::warn!("Pedido de conexão de {} para {} recusado: {}", addr, ph.id, reason);
             let mut msg_out = RendezvousMessage::new();
             msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -1248,10 +1248,10 @@ impl RendezvousServer {
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
             sink = Some(Sink::TcpStream(a, None));
-            // AFPES: fase 1 da troca de chaves (só na porta principal, que recebe a chave do servidor)
+            // app-remoto: fase 1 da troca de chaves (só na porta principal, que recebe a chave do servidor)
             if !key.is_empty() {
                 if let Some(server_sk) = self.inner.sk.as_ref() {
-                    let msg = afpes::key_exchange_phase1(&self.inner.secure_tcp, server_sk);
+                    let msg = remoto::key_exchange_phase1(&self.inner.secure_tcp, server_sk);
                     Self::send_to_sink(&mut sink, msg).await;
                 }
             }

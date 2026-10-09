@@ -1,4 +1,4 @@
-// AFPES: extensões do hbbs oficial, isoladas aqui para facilitar a sincronização com o original.
+// app-remoto: extensões do hbbs oficial, isoladas aqui para facilitar a sincronização com o original.
 //
 // 1. Troca de chaves no TCP (KeyExchange): o cliente RustDesk logado exige um canal cifrado com o
 //    servidor antes de enviar o token. O hbbs oficial não implementa; sem isso a conexão falha com
