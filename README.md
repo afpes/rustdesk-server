@@ -1,7 +1,10 @@
 # Servidor do app-remoto (fork do rustdesk-server)
 
-Este fork é o servidor RustDesk (hbbs/hbbr) usado pelo **app-remoto**. Ninguém instala nada a
-partir daqui: cada push na branch `remoto` roda os testes e publica a imagem
+Este fork é a **central de conexões** do **app-remoto**: o servidor RustDesk (hbbs/hbbr) que registra
+as máquinas online e liga o Console ao Agente. Não tem tela e ninguém o usa diretamente; o painel e as
+regras ficam no repositório `app-remoto` (o README dele tem o diagrama de como as peças se encaixam).
+
+Ninguém instala nada a partir daqui: cada push na branch `remoto` roda os testes e publica a imagem
 `ghcr.io/<dono do repositório>/remoto-servidor` (pública), que o `docker-compose.yml` do `app-remoto`
 baixa. Instalação completa: `DEPLOY.md` no repositório `app-remoto`.
 
